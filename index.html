@@ -335,6 +335,16 @@
         let audioCtx;
         let isPopupActive = false;
 
+        // Array Ejaan Nama Bulan Hijriah Bahasa Indonesia Baku (Kemenag RI)
+        const namaBulanHijriah = [
+            "Muharram", "Shafar", "Rabi'ul Awal", "Rabi'ul Akhir",
+            "Jumadil Awal", "Jumadil Akhir", "Rajab", "Sya'ban",
+            "Ramadhan", "Syawal", "Dzulqa'dah", "Dzulhijjah"
+        ];
+        
+        // Variabel global untuk menyimpan string tanggal Hijriah
+        let tanggalHijriahAkurat = "Memuat hijriah...";
+
         let currentSlide = 0;
         function rotateSlider() {
             const slides = document.querySelectorAll('.slide');
@@ -345,20 +355,20 @@
         }
         setInterval(rotateSlider, 8000); 
 
-        function getHijriDate() {
-            const date = new Date();
-            let formattedDate = new Intl.DateTimeFormat('id-TN-u-ca-islamic', {
-                day: 'numeric', month: 'long', year: 'numeric'
-            }).format(date);
-            formattedDate = formattedDate.replace(/ AH| H/ig, '');
-            return formattedDate + ' H';
-        }
-
         async function fetchJadwalAbadi() {
             try {
+                // Method 20 = Kemenag RI / Standar Asia Tenggara
                 const response = await fetch('https://api.aladhan.com/v1/timingsByCity?city=Jakarta&country=Indonesia&method=20');
                 const data = await response.json();
                 const timings = data.data.timings;
+                
+                // Menyusun Tanggal Hijriah Akurat Langsung Dari API (Menghindari bug browser)
+                const hijriData = data.data.date.hijri;
+                const hDay = hijriData.day;
+                const hMonthIndex = parseInt(hijriData.month.number) - 1; // Kurangi 1 untuk index array (0-11)
+                const hYear = hijriData.year;
+                
+                tanggalHijriahAkurat = `${hDay} ${namaBulanHijriah[hMonthIndex]} ${hYear} H`;
 
                 jadwalHariIni = [
                     { id: 'shubuh', nama: 'Shubuh', waktu: timings.Fajr },
@@ -371,7 +381,7 @@
                 renderSchedule();
             } catch (error) {
                 console.error("Gagal mengambil jadwal:", error);
-                document.getElementById('schedule-container').innerHTML = `<div style="text-align:center; color:#ffaaaa; font-weight:bold;">Gagal memuat jadwal.<br>Pastikan perangkat terhubung internet saat pertama kali dibuka.</div>`;
+                document.getElementById('schedule-container').innerHTML = `<div style="text-align:center; color:#ffaaaa; font-weight:bold;">Gagal memuat jadwal.<br>Pastikan perangkat terhubung internet.</div>`;
             }
         }
 
@@ -405,22 +415,26 @@
 
         function playBeep(times) {
             if (!audioCtx) return;
+            if (audioCtx.state === 'suspended') return; 
+
             let i = 0;
             function beep() {
                 if (i >= times) return;
-                const oscillator = audioCtx.createOscillator();
-                const gainNode = audioCtx.createGain();
-                
-                oscillator.connect(gainNode);
-                gainNode.connect(audioCtx.destination);
-                oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(850, audioCtx.currentTime); 
-                
-                gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4); 
-                
-                oscillator.start(audioCtx.currentTime);
-                oscillator.stop(audioCtx.currentTime + 0.4);
+                try {
+                    const oscillator = audioCtx.createOscillator();
+                    const gainNode = audioCtx.createGain();
+                    
+                    oscillator.connect(gainNode);
+                    gainNode.connect(audioCtx.destination);
+                    oscillator.type = 'sine';
+                    oscillator.frequency.setValueAtTime(850, audioCtx.currentTime); 
+                    
+                    gainNode.gain.setValueAtTime(1, audioCtx.currentTime);
+                    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4); 
+                    
+                    oscillator.start(audioCtx.currentTime);
+                    oscillator.stop(audioCtx.currentTime + 0.4);
+                } catch(e) {}
                 
                 i++;
                 if (i < times) setTimeout(beep, 600);
@@ -461,19 +475,19 @@
 
             const now = new Date();
             
-            // Format Waktu Utama (Jam:Menit dengan Detik lebih kecil)
             const hDisplay = String(now.getHours()).padStart(2, '0');
             const mDisplay = String(now.getMinutes()).padStart(2, '0');
             const sDisplay = String(now.getSeconds()).padStart(2, '0');
             document.getElementById('clock-main').innerHTML = `${hDisplay}:${mDisplay}<span style="font-size: 0.5em; opacity: 0.9; margin-left: 2px;">:${sDisplay}</span>`;
             
             document.getElementById('date-masehi').innerText = now.toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-            document.getElementById('hijri-date').innerText = getHijriDate();
+            
+            // Memanggil variabel tanggal Hijriah yang sudah di-fetch dari API
+            document.getElementById('hijri-date').innerText = tanggalHijriahAkurat;
 
             let nextIdx = 0;
             let activeIdx = -1;
 
-            // Logika Sinkronisasi Highlight Real-time
             for (let i = 0; i < jadwalHariIni.length; i++) {
                 let [jam, menit] = jadwalHariIni[i].waktu.split(':');
                 let w = new Date(); w.setHours(parseInt(jam), parseInt(menit), 0, 0);
@@ -491,7 +505,6 @@
 
             if (activeIdx === -1) { activeIdx = jadwalHariIni.length - 1; nextIdx = 0; }
 
-            // Terapkan Highlight Secara Real-time
             document.querySelectorAll('.schedule-row').forEach(r => r.classList.remove('active-prayer'));
             if (activeIdx >= 0) document.getElementById(`row-${activeIdx}`).classList.add('active-prayer');
 
@@ -512,22 +525,29 @@
         }
 
         function toggleFullScreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => console.log(err));
-            } else { document.exitFullscreen(); }
+            try {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(err => console.log("Layar penuh ditolak browser tanpa interaksi pengguna."));
+                } else { 
+                    document.exitFullscreen(); 
+                }
+            } catch(e) {}
         }
 
-        function initApp() {
-            document.getElementById('overlay-start').style.display = 'none';
-            toggleFullScreen(); 
+        window.onload = function() {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === 'suspended') audioCtx.resume();
             
             fetchJadwalAbadi().then(() => {
                 updateEngine();
                 setInterval(updateEngine, 1000);
             });
-        }
+
+            document.body.addEventListener('click', function() {
+                if (audioCtx && audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+            }, { once: true });
+        };
     </script>
 </body>
 </html>
